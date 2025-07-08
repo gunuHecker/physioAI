@@ -32,6 +32,10 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 # Load Gemini Auth info
 load_dotenv()
 
+# Set Google Application Credentials from .env or hardcoded path
+credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/home/rps/DeeCogs/google-adk/credentials.json")
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
+
 APP_NAME = "Physio AI"
 
 async def start_agent_session(user_id, is_audio=False,enable_video=False):
