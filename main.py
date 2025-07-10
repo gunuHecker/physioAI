@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse
 import uvicorn
 
 from myAgents.agent import root_agent
-from myAgents.state_schema import StateManager, ALIASessionState, ExitReason
+from myAgents.state_schema import StateManager, ALIASessionState
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
@@ -61,14 +61,12 @@ async def start_agent_session(user_id, is_audio=False, enable_video=False):
         print(f"[DEBUG] Session created: {session.id}")
 
         # Initialize ALIA state for this session
-        interaction_mode = "audio" if is_audio else "text"
         initial_state = StateManager.create_initial_state(
             user_id=user_id, 
-            session_id=session.id,
-            interaction_mode=interaction_mode
+            session_id=session.id
         )
         
-        # Store initial state in session - fix the await issue
+        # Store initial state in session
         session.state.update(initial_state.to_dict())
         print(f"[DEBUG] Initialized ALIA state for session {session.id}")
         print(f"[STATE] Initial state: {initial_state.get_summary()}")
@@ -125,10 +123,22 @@ async def agent_to_client_messaging(websocket, live_events, session):
                     
                     # Optional: Send state summary for debugging
                     try:
-                        current_state_dict = session.state.to_dict()  # This is already a dict
+                        # session.state is already a dict
+                        current_state_dict = session.state
                         if current_state_dict:
                             state = ALIASessionState.from_dict(current_state_dict)
                             print(f"[STATE SUMMARY] 📊 {state.get_summary()}")
+                            
+                            # Send state info to client for debugging (optional)
+                            state_message = {
+                                "mime_type": "application/json",
+                                "data": {
+                                    "type": "state_update",
+                                    "stage": state.conversation_stage.value,
+                                    "summary": state.get_summary()
+                                }
+                            }
+                            await websocket.send_text(json.dumps(state_message))
                     except Exception as e:
                         print(f"[DEBUG] Could not extract state: {e}")
                     
@@ -185,7 +195,8 @@ async def client_to_agent_messaging(websocket, live_request_queue, session):
             # Update session state with user message if it's text
             if mime_type == "text/plain":
                 try:
-                    current_state_dict = session.state.to_dict()  # This is already a dict
+                    # session.state is already a dict
+                    current_state_dict = session.state
                     if current_state_dict:
                         state = ALIASessionState.from_dict(current_state_dict)
                         state.update_interaction(user_message=data)
@@ -301,37 +312,17 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, is_audio: str, 
                 live_request_queue.close()
             
             if session:
-                # Final state summary
+                # Final state summary (simplified)
                 try:
-                    # Check if session.state exists and has to_dict method
                     if hasattr(session, 'state') and session.state is not None:
-                        if hasattr(session.state, 'to_dict'):
-                            final_state_dict = session.state.to_dict()
-                        else:
-                            # session.state might already be a dict
-                            final_state_dict = session.state if isinstance(session.state, dict) else None
-                        
-                        if final_state_dict:
-                            final_state = ALIASessionState.from_dict(final_state_dict)
+                        current_state_dict = session.state.to_dict()
+                        if current_state_dict:
+                            final_state = ALIASessionState.from_dict(current_state_dict)
                             print(f"[SESSION END] Final state for user {user_id}: {final_state.get_summary()}")
-                            
-                            # Mark session as complete if not already
-                            if not final_state.session_complete:
-                                final_state.complete_session(final_state.exit_reason or ExitReason.USER_EXIT)
-                                
-                                # Update session state
-                                if hasattr(session.state, 'update'):
-                                    session.state.update(final_state.to_dict())
-                                else:
-                                    print("[DEBUG] session.state doesn't have update method")
-                        else:
-                            print("[DEBUG] No final state dict available")
                     else:
-                        print("[DEBUG] session.state is None or doesn't exist")
-                            
+                        print("[DEBUG] No session state available for cleanup")
                 except Exception as e:
                     print(f"[WARNING] Could not finalize session state: {e}")
-                    print(f"[DEBUG] session.state type: {type(session.state) if hasattr(session, 'state') else 'no state attr'}")
                     
             print(f"Client #{user_id} session cleaned up")
             
@@ -365,11 +356,9 @@ async def debug_session(user_id: str):
 
 if __name__ == "__main__":
     print(f"Starting {APP_NAME} server...")
-    print("ALIA Multi-Agent System:")
-    print("  - Greeting Agent")
-    print("  - Pain Analysis Agent") 
-    print("  - Consent Agent")
-    print("  - Assessment Agent")
-    print("  - Closure Agent")
+    print("ALIA Simplified Agent System:")
+    print("  - Root LLM Agent (ALIA)")
+    print("  - Greeting Agent Tool")
+    print("  - Pain Analysis Agent Tool")
     print()
     uvicorn.run(app, host="0.0.0.0", port=8000)
