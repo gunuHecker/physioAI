@@ -45,3 +45,7 @@ logs/
 
 # Node modules (if using any frontend tools)
 node_modules/
+
+# Dev Files
+tests/
+examples/
