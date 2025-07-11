@@ -147,12 +147,25 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, is_audio: st
         async def agent_to_client():
             """Handle agent to client communication"""
             logger.debug(f"[{session_id}] Starting agent_to_client task")
+            audio_chunk_counter = 0
+            
             try:
                 async for event in live_events:
                     agent_author = getattr(event, 'author', 'unknown')
-                    logger.debug(f"[{session_id}] 📨 Event from: {agent_author} | Turn Complete: {event.turn_complete} | Partial: {event.partial}")
+                    event_processed = False
                     
+                    # Log basic event info (reduced for audio performance)
+                    if not (event.content and event.content.parts and 
+                           event.content.parts[0].inline_data and 
+                           event.content.parts[0].inline_data.mime_type.startswith("audio/")):
+                        logger.debug(f"[{session_id}] 📨 Event from: {agent_author} | Turn Complete: {event.turn_complete} | Partial: {event.partial}")
+                    
+                    # Handle turn complete or interrupted
                     if event.turn_complete or event.interrupted:
+                        if audio_chunk_counter > 0:
+                            logger.info(f"[{session_id}] Finished sending {audio_chunk_counter} audio chunks.")
+                        audio_chunk_counter = 0
+                        
                         message = {
                             "turn_complete": event.turn_complete,
                             "interrupted": event.interrupted,
@@ -165,8 +178,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, is_audio: st
                             if session.state:
                                 state = ALIASessionState.from_dict(session.state)
                                 logger.info(f"[{session_id}] 📊 State summary: {state.get_summary()}")
-                                
-                                # Send state info to client for debugging (optional)
                                 state_message = {
                                     "mime_type": "application/json",
                                     "data": {
@@ -178,35 +189,49 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, is_audio: st
                                 await websocket.send_text(json.dumps(state_message))
                         except Exception as e:
                             logger.debug(f"[{session_id}] Could not extract state: {e}")
+                        
+                        event_processed = True
                         continue
 
                     # Handle content
-                    part = event.content and event.content.parts and event.content.parts[0]
-                    if not part:
-                        logger.debug(f"[{session_id}] No part found in event")
-                        continue
+                    if event.content and event.content.parts:
+                        part = event.content.parts[0]
+                        
+                        # Audio content
+                        if part.inline_data and part.inline_data.mime_type.startswith("audio/pcm"):
+                            audio_data = part.inline_data.data
+                            if audio_data:
+                                message = {
+                                    "mime_type": "audio/pcm",
+                                    "data": base64.b64encode(audio_data).decode("ascii")
+                                }
+                                await websocket.send_text(json.dumps(message))
+                                audio_chunk_counter += 1
+                                if audio_chunk_counter == 1:
+                                    logger.info(f"[{session_id}] Receiving audio stream from ADK...")
+                                logger.debug(f"[{session_id}] Sending audio chunk #{audio_chunk_counter} ({len(audio_data)} bytes) to client.")
+                                event_processed = True
 
-                    logger.debug(f"[{session_id}] Part content: {part}")
-
-                    # Audio content
-                    if part.inline_data and part.inline_data.mime_type.startswith("audio/pcm"):
-                        audio_data = part.inline_data.data
-                        if audio_data:
+                        # Text content
+                        elif part.text and event.partial:
                             message = {
-                                "mime_type": "audio/pcm",
-                                "data": base64.b64encode(audio_data).decode("ascii")
+                                "mime_type": "text/plain",
+                                "data": part.text
                             }
                             await websocket.send_text(json.dumps(message))
-                            logger.info(f"[{session_id}] Agent to client - audio/pcm: {len(audio_data)} bytes")
+                            logger.info(f"[{session_id}] Agent to client - text/plain: {part.text}")
+                            event_processed = True
 
-                    # Text content
-                    elif part.text and event.partial:
-                        message = {
-                            "mime_type": "text/plain",
-                            "data": part.text
-                        }
-                        await websocket.send_text(json.dumps(message))
-                        logger.info(f"[{session_id}] Agent to client - text/plain: {part.text}")
+                    # Tool call and function response logging
+                    if not event_processed and not getattr(event, 'actions', None):
+                        if event.get_function_calls():
+                            for call in event.get_function_calls():
+                                logger.info(f"[{session_id}] 🔧 Tool Call Requested by {event.author}: {call.name}")
+                                logger.debug(f"[{session_id}] Tool Call Details: {call}")
+                        elif event.get_function_responses():
+                            for response in event.get_function_responses():
+                                logger.info(f"[{session_id}] 🔧 Tool Response from {event.author}: {response.name}")
+                                logger.debug(f"[{session_id}] Tool Response Details: {response}")
 
             except WebSocketDisconnect:
                 logger.info(f"[{session_id}] WebSocket disconnected during agent processing")
