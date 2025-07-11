@@ -6,18 +6,22 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
 
-    // Init buffer
-    this.bufferSize = 24000 * 180;  // 24kHz x 180 seconds
+    // Init buffer - use dynamic size based on actual sample rate
+    const sampleRate = this.sampleRate || 48000; // Default fallback
+    this.bufferSize = sampleRate * 180;  // Sample rate x 180 seconds
     this.buffer = new Float32Array(this.bufferSize);
     this.writeIndex = 0;
     this.readIndex = 0;
+
+    console.log(`PCM Player: Using sample rate ${sampleRate}, buffer size ${this.bufferSize}`);
 
     // Handle incoming messages from main thread
     this.port.onmessage = (event) => {
       // Reset the buffer when 'endOfAudio' message received
       if (event.data.command === 'endOfAudio') {
-        this.readIndex = this.writeIndex; // Clear the buffer
-        console.log("endOfAudio received, clearing the buffer.");
+        this.writeIndex = 0;
+        this.readIndex = 0;
+        console.log("PCM Player: Buffer reset");
         return;
       }
 
@@ -34,37 +38,28 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
     for (let i = 0; i < int16Samples.length; i++) {
       // Convert 16-bit integer to float in [-1, 1]
       const floatVal = int16Samples[i] / 32768;
-
-      // Store in ring buffer for left channel only (mono)
+      
       this.buffer[this.writeIndex] = floatVal;
       this.writeIndex = (this.writeIndex + 1) % this.bufferSize;
-
-      // Overflow handling (overwrite oldest samples)
-      if (this.writeIndex === this.readIndex) {
-        this.readIndex = (this.readIndex + 1) % this.bufferSize;
-      }
     }
   }
 
   // The system calls `process()` ~128 samples at a time (depending on the browser).
   // We fill the output buffers from our ring buffer.
   process(inputs, outputs, parameters) {
-
     // Write a frame to the output
     const output = outputs[0];
     const framesPerBlock = output[0].length;
+    
     for (let frame = 0; frame < framesPerBlock; frame++) {
-
-      // Write the sample(s) into the output buffer
-      output[0][frame] = this.buffer[this.readIndex]; // left channel
-      if (output.length > 1) {
-        output[1][frame] = this.buffer[this.readIndex]; // right channel
+      const sample = this.buffer[this.readIndex];
+      
+      // Write to all output channels
+      for (let channel = 0; channel < output.length; channel++) {
+        output[channel][frame] = sample;
       }
-
-      // Move the read index forward unless underflowing
-      if (this.readIndex != this.writeIndex) {
-        this.readIndex = (this.readIndex + 1) % this.bufferSize;
-      }
+      
+      this.readIndex = (this.readIndex + 1) % this.bufferSize;
     }
 
     // Returning true tells the system to keep the processor alive
@@ -73,4 +68,3 @@ class PCMPlayerProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor('pcm-player-processor', PCMPlayerProcessor);
-

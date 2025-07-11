@@ -216,7 +216,7 @@ async def client_to_agent_messaging(websocket, live_request_queue, session):
                 # Send an audio data
                 decoded_data = base64.b64decode(data)
                 live_request_queue.send_realtime(Blob(data=decoded_data, mime_type=mime_type))
-                print(f"[CLIENT TO AGENT]: audio/pcm: {len(decoded_data)} bytes")
+                # print(f"[CLIENT TO AGENT]: audio/pcm: {len(decoded_data)} bytes")
                 
             elif mime_type.startswith("image/") or mime_type.startswith("video/"):
                 # Send video frame or image data

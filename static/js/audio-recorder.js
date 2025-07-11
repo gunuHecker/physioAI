@@ -5,18 +5,30 @@
 let micStream;
 
 export async function startAudioRecorderWorklet(audioRecorderHandler) {
-  // Create an AudioContext
-  const audioRecorderContext = new AudioContext({ sampleRate: 16000 });
+  // Create an AudioContext and let it use the browser's default sample rate
+  const audioRecorderContext = new AudioContext();
   console.log("AudioContext sample rate:", audioRecorderContext.sampleRate);
+
+  // Resume the context if it's suspended
+  if (audioRecorderContext.state === 'suspended') {
+    await audioRecorderContext.resume();
+  }
 
   // Load the AudioWorklet module
   const workletURL = new URL("./pcm-recorder-processor.js", import.meta.url);
   await audioRecorderContext.audioWorklet.addModule(workletURL);
 
-  // Request access to the microphone
+  // Request access to the microphone WITHOUT specifying sample rate
+  // Let it use the browser's default to match the AudioContext
   micStream = await navigator.mediaDevices.getUserMedia({
-    audio: { channelCount: 1 },
+    audio: { 
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    },
   });
+  
   const source = audioRecorderContext.createMediaStreamSource(micStream);
 
   // Create an AudioWorkletNode that uses the PCMProcessor
@@ -50,8 +62,10 @@ function convertFloat32ToPCM(inputData) {
   // Create an Int16Array of the same length.
   const pcm16 = new Int16Array(inputData.length);
   for (let i = 0; i < inputData.length; i++) {
+    // Clamp the value to [-1, 1] range before scaling
+    const clampedValue = Math.max(-1, Math.min(1, inputData[i]));
     // Multiply by 0x7fff (32767) to scale the float value to 16-bit PCM range.
-    pcm16[i] = inputData[i] * 0x7fff;
+    pcm16[i] = clampedValue * 0x7fff;
   }
   // Return the underlying ArrayBuffer.
   return pcm16.buffer;

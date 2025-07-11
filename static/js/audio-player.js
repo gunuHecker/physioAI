@@ -3,11 +3,14 @@
  */
 
 export async function startAudioPlayerWorklet() {
-    // 1. Create an AudioContext
-    const audioContext = new AudioContext({
-        sampleRate: 24000
-    });
+    // 1. Create an AudioContext using browser default sample rate
+    const audioContext = new AudioContext();
+    console.log("Audio Player Context sample rate:", audioContext.sampleRate);
     
+    // Resume if suspended
+    if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+    }
     
     // 2. Load your custom processor code
     const workletURL = new URL('./pcm-player-processor.js', import.meta.url);

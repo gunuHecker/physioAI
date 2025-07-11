@@ -1,10 +1,51 @@
 from google.adk.agents import LlmAgent
 from google.adk.tools.agent_tool import AgentTool
+from google.adk.agents.callback_context import CallbackContext
 from typing import Optional
 
 from .state_schema import (
     ALIASessionState, StateManager, ConversationStage
 )
+
+
+# ============================================================================
+# Callback functions to update state 
+# ============================================================================
+
+def update_stage_after_greeting(callback_context: CallbackContext) -> Optional[object]:
+    """After agent callback to update stage after greeting"""
+    current_state = ALIASessionState.from_dict(callback_context.state.to_dict())
+    
+    print(f"[CALLBACK] Greeting agent completed. Current stage: {current_state.conversation_stage}")
+    
+    if current_state.conversation_stage == ConversationStage.GREETING:
+        current_state.transition_to_stage(ConversationStage.PAIN_ANALYSIS)
+        current_state.update_interaction()
+        
+        # Update the callback context state
+        callback_context.state.update(current_state.to_dict())
+        
+        print(f"[CALLBACK] Stage updated to: {current_state.conversation_stage}")
+    
+    return None  # Don't override the agent's output
+
+def update_stage_after_pain_analysis(callback_context: CallbackContext) -> Optional[object]:
+    """After agent callback to update stage after pain analysis"""
+    current_state = ALIASessionState.from_dict(callback_context.state.to_dict())
+    
+    print(f"[CALLBACK] Pain analysis agent completed. Current stage: {current_state.conversation_stage}")
+    
+    if current_state.conversation_stage == ConversationStage.PAIN_ANALYSIS:
+        current_state.transition_to_stage(ConversationStage.CONSENT)
+        current_state.update_interaction()
+        
+        # Update the callback context state
+        callback_context.state.update(current_state.to_dict())
+        
+        print(f"[CALLBACK] Stage updated to: {current_state.conversation_stage}")
+    
+    return None # Don't override the agent's output
+
 
 # =============================================================================
 # INDIVIDUAL AGENTS
@@ -32,7 +73,8 @@ Important:
 - Focus on lower back pain specialty
 - Ask an open-ended question about their needs
 """,
-    output_key="greeting_complete"
+    output_key="greeting_complete",
+    after_agent_callback=update_stage_after_greeting
 )
 
 pain_analysis_agent = LlmAgent(
@@ -66,7 +108,8 @@ If it IS lower back pain, acknowledge their condition empathetically.
 
 Be concise and focused on pain location assessment.
 """,
-    output_key="pain_analysis_complete"
+    output_key="pain_analysis_complete",
+    after_agent_callback=update_stage_after_pain_analysis
 )
 
 # =============================================================================
