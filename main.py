@@ -3,6 +3,7 @@ import base64
 import json
 import os
 import warnings
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -26,6 +27,18 @@ from myAgents.state_schema import StateManager, ALIASessionState
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('physio_ai.log')
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
 #
 # ADK Streaming
 #
@@ -42,7 +55,7 @@ APP_NAME = "Physio AI"
 async def start_agent_session(user_id, is_audio=False, enable_video=False):
     """Starts an agent session"""
     try:
-        print(f"[DEBUG] Creating runner for user {user_id}")
+        logger.debug(f"Creating runner for user {user_id}")
         
         # Create a Runner
         runner = InMemoryRunner(
@@ -50,7 +63,7 @@ async def start_agent_session(user_id, is_audio=False, enable_video=False):
             agent=root_agent,
         )
 
-        print(f"[DEBUG] Creating session for user {user_id}")
+        logger.debug(f"Creating session for user {user_id}")
         
         # Create a Session
         session = await runner.session_service.create_session(
@@ -58,7 +71,7 @@ async def start_agent_session(user_id, is_audio=False, enable_video=False):
             user_id=user_id,
         )
 
-        print(f"[DEBUG] Session created: {session.id}")
+        logger.debug(f"Session created: {session.id}")
 
         # Initialize ALIA state for this session
         initial_state = StateManager.create_initial_state(
@@ -68,8 +81,8 @@ async def start_agent_session(user_id, is_audio=False, enable_video=False):
         
         # Store initial state in session
         session.state.update(initial_state.to_dict())
-        print(f"[DEBUG] Initialized ALIA state for session {session.id}")
-        print(f"[STATE] Initial state: {initial_state.get_summary()}")
+        logger.debug(f"Initialized ALIA state for session {session.id}")
+        logger.info(f"Initial state: {initial_state.get_summary()}")
 
         # Set response modalities based on capabilities
         modalities = []
@@ -80,12 +93,12 @@ async def start_agent_session(user_id, is_audio=False, enable_video=False):
         
         run_config = RunConfig(response_modalities=modalities)
         
-        print(f"[DEBUG] Using modalities: {modalities}, video enabled: {enable_video}")
+        logger.debug(f"Using modalities: {modalities}, video enabled: {enable_video}")
 
         # Create a LiveRequestQueue for this session
         live_request_queue = LiveRequestQueue()
 
-        print(f"[DEBUG] Starting live events")
+        logger.debug("Starting live events")
         
         # Start agent session
         live_events = runner.run_live(
@@ -94,23 +107,23 @@ async def start_agent_session(user_id, is_audio=False, enable_video=False):
             run_config=run_config,
         )
         
-        print(f"[DEBUG] Live events started successfully")
+        logger.debug("Live events started successfully")
         return live_events, live_request_queue, session
         
     except Exception as e:
-        print(f"[ERROR] Failed to start agent session: {e}")
+        logger.error(f"Failed to start agent session: {e}")
         raise
 
 async def agent_to_client_messaging(websocket, live_events, session):
     """Agent to client communication"""
     try:
-        print("[DEBUG] Starting agent_to_client_messaging")
+        logger.debug("Starting agent_to_client_messaging")
         while True:
-            print("[DEBUG] Waiting for events from agent...")
+            logger.debug("Waiting for events from agent...")
             async for event in live_events:
                 # Add agent identification to the debug
                 agent_author = getattr(event, 'author', 'unknown')
-                print(f"[DEBUG] 📨 Event from: {agent_author} | Turn Complete: {event.turn_complete} | Partial: {event.partial}")
+                logger.debug(f"📨 Event from: {agent_author} | Turn Complete: {event.turn_complete} | Partial: {event.partial}")
                 
                 # If the turn complete or interrupted, send it
                 if event.turn_complete or event.interrupted:
@@ -119,7 +132,7 @@ async def agent_to_client_messaging(websocket, live_events, session):
                         "interrupted": event.interrupted,
                     }
                     await websocket.send_text(json.dumps(message))
-                    print(f"[AGENT TO CLIENT] 🏁 Turn complete from {agent_author}: {message}")
+                    logger.info(f"🏁 Turn complete from {agent_author}: {message}")
                     
                     # Optional: Send state summary for debugging
                     try:
@@ -127,7 +140,7 @@ async def agent_to_client_messaging(websocket, live_events, session):
                         current_state_dict = session.state
                         if current_state_dict:
                             state = ALIASessionState.from_dict(current_state_dict)
-                            print(f"[STATE SUMMARY] 📊 {state.get_summary()}")
+                            logger.info(f"📊 State summary: {state.get_summary()}")
                             
                             # Send state info to client for debugging (optional)
                             state_message = {
@@ -140,7 +153,7 @@ async def agent_to_client_messaging(websocket, live_events, session):
                             }
                             await websocket.send_text(json.dumps(state_message))
                     except Exception as e:
-                        print(f"[DEBUG] Could not extract state: {e}")
+                        logger.debug(f"Could not extract state: {e}")
                     
                     continue
 
@@ -149,10 +162,10 @@ async def agent_to_client_messaging(websocket, live_events, session):
                     event.content and event.content.parts and event.content.parts[0]
                 )
                 if not part:
-                    print("[DEBUG] No part found in event")
+                    logger.debug("No part found in event")
                     continue
 
-                print(f"[DEBUG] Part content: {part}")
+                logger.debug(f"Part content: {part}")
             
                 # If it's audio, send Base64 encoded audio data
                 is_audio = part.inline_data and part.inline_data.mime_type.startswith("audio/pcm")
@@ -164,7 +177,7 @@ async def agent_to_client_messaging(websocket, live_events, session):
                             "data": base64.b64encode(audio_data).decode("ascii")
                         }
                         await websocket.send_text(json.dumps(message))
-                        print(f"[AGENT TO CLIENT]: audio/pcm: {len(audio_data)} bytes.")
+                        logger.info(f"Agent to client - audio/pcm: {len(audio_data)} bytes")
                         continue
 
                 # If it's text and a partial text, send it
@@ -174,10 +187,10 @@ async def agent_to_client_messaging(websocket, live_events, session):
                         "data": part.text
                     }
                     await websocket.send_text(json.dumps(message))
-                    print(f"[AGENT TO CLIENT]: text/plain: {part.text}")
+                    logger.info(f"Agent to client - text/plain: {part.text}")
 
     except Exception as e:
-        print(f"[ERROR] Failed to get agent to client messages: {e}")
+        logger.error(f"Failed to get agent to client messages: {e}")
         raise
 
 async def client_to_agent_messaging(websocket, live_request_queue, session):
@@ -190,7 +203,7 @@ async def client_to_agent_messaging(websocket, live_request_queue, session):
             mime_type = message["mime_type"]
             data = message["data"]
 
-            print(f"[CLIENT TO AGENT] Received: {mime_type}")
+            logger.info(f"Client to agent - received: {mime_type}")
 
             # Update session state with user message if it's text
             if mime_type == "text/plain":
@@ -201,41 +214,41 @@ async def client_to_agent_messaging(websocket, live_request_queue, session):
                         state = ALIASessionState.from_dict(current_state_dict)
                         state.update_interaction(user_message=data)
                         session.state.update(state.to_dict())
-                        print(f"[STATE] Updated with user message: '{data}' | Stage: {state.conversation_stage.value}")
+                        logger.info(f"Updated state with user message: '{data}' | Stage: {state.conversation_stage.value}")
                 except Exception as e:
-                    print(f"[WARNING] Could not update state with user message: {e}")
+                    logger.warning(f"Could not update state with user message: {e}")
 
             # Send the message to the agent
             if mime_type == "text/plain":
                 # Send a text message
                 content = Content(role="user", parts=[Part.from_text(text=data)])
                 live_request_queue.send_content(content=content)
-                print(f"[CLIENT TO AGENT]: {data}")
+                logger.info(f"Client to agent - text: {data}")
                 
             elif mime_type == "audio/pcm":
                 # Send an audio data
                 decoded_data = base64.b64decode(data)
                 live_request_queue.send_realtime(Blob(data=decoded_data, mime_type=mime_type))
-                # print(f"[CLIENT TO AGENT]: audio/pcm: {len(decoded_data)} bytes")
+                logger.debug(f"Client to agent - audio/pcm: {len(decoded_data)} bytes")
                 
             # Send video/images to the Agent
             elif mime_type == "image/jpeg":
                 # Send an image data
                 decoded_data = base64.b64decode(data)
                 live_request_queue.send_realtime(Blob(data=decoded_data, mime_type=mime_type))
-                print(f"[CLIENT TO AGENT]: image/jpeg: {len(decoded_data)} bytes")
+                logger.info(f"Client to agent - image/jpeg: {len(decoded_data)} bytes")
 
             elif mime_type.startswith("image/") or mime_type.startswith("video/"):
                 # Send video frame or image data
                 decoded_data = base64.b64decode(data)
                 live_request_queue.send_realtime(Blob(data=decoded_data, mime_type=mime_type))
-                print(f"[CLIENT TO AGENT]: {mime_type}: {len(decoded_data)} bytes")
+                logger.info(f"Client to agent - {mime_type}: {len(decoded_data)} bytes")
 
             else:
-                print(f"[WARNING] Unsupported mime type: {mime_type}")
+                logger.warning(f"Unsupported mime type: {mime_type}")
                 
     except Exception as e:
-        print(f"[ERROR] Client to agent messaging error: {e}")
+        logger.error(f"Client to agent messaging error: {e}")
         raise
 
 #
@@ -260,7 +273,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, is_audio: str, 
 
     # Wait for client connection
     await websocket.accept()
-    print(f"Client #{user_id} connected, audio mode: {is_audio}, video mode: {enable_video}")
+    logger.info(f"Client #{user_id} connected, audio mode: {is_audio}, video mode: {enable_video}")
 
     session = None
     live_request_queue = None
@@ -274,7 +287,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, is_audio: str, 
             enable_video == "true"
         )
 
-        print(f"[DEBUG] Session {session.id} ready for user {user_id}")
+        logger.debug(f"Session {session.id} ready for user {user_id}")
 
         # Start tasks
         agent_to_client_task = asyncio.create_task(
@@ -297,7 +310,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, is_audio: str, 
                 pass
 
     except Exception as e:
-        print(f"[ERROR] WebSocket error for user {user_id}: {e}")
+        logger.error(f"WebSocket error for user {user_id}: {e}")
         
         # Send error message to client if possible
         try:
@@ -322,19 +335,19 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, is_audio: str, 
                         current_state_dict = session.state.to_dict()
                         if current_state_dict:
                             final_state = ALIASessionState.from_dict(current_state_dict)
-                            print(f"[SESSION END] Final state for user {user_id}: {final_state.get_summary()}")
+                            logger.info(f"Session end - final state for user {user_id}: {final_state.get_summary()}")
                     else:
-                        print("[DEBUG] No session state available for cleanup")
+                        logger.debug("No session state available for cleanup")
                 except Exception as e:
-                    print(f"[WARNING] Could not finalize session state: {e}")
+                    logger.warning(f"Could not finalize session state: {e}")
                     
-            print(f"Client #{user_id} session cleaned up")
+            logger.info(f"Client #{user_id} session cleaned up")
             
         except Exception as cleanup_error:
-            print(f"[ERROR] Cleanup error: {cleanup_error}")
+            logger.error(f"Cleanup error: {cleanup_error}")
 
         # Disconnected
-        print(f"Client #{user_id} disconnected")
+        logger.info(f"Client #{user_id} disconnected")
 
 
 @app.get("/health")
@@ -359,10 +372,10 @@ async def debug_session(user_id: str):
 
 
 if __name__ == "__main__":
-    print(f"Starting {APP_NAME} server...")
-    print("ALIA Simplified Agent System:")
-    print("  - Root LLM Agent (ALIA)")
-    print("  - Greeting Agent Tool")
-    print("  - Pain Analysis Agent Tool")
-    print()
+    logger.info(f"Starting {APP_NAME} server...")
+    logger.info("ALIA Simplified Agent System:")
+    logger.info("  - Root LLM Agent (ALIA)")
+    logger.info("  - Greeting Agent Tool")
+    logger.info("  - Pain Analysis Agent Tool")
+    logger.info("")
     uvicorn.run(app, host="0.0.0.0", port=8000)
