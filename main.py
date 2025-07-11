@@ -218,15 +218,19 @@ async def client_to_agent_messaging(websocket, live_request_queue, session):
                 live_request_queue.send_realtime(Blob(data=decoded_data, mime_type=mime_type))
                 # print(f"[CLIENT TO AGENT]: audio/pcm: {len(decoded_data)} bytes")
                 
+            # Send video/images to the Agent
+            elif mime_type == "image/jpeg":
+                # Send an image data
+                decoded_data = base64.b64decode(data)
+                live_request_queue.send_realtime(Blob(data=decoded_data, mime_type=mime_type))
+                print(f"[CLIENT TO AGENT]: image/jpeg: {len(decoded_data)} bytes")
+
             elif mime_type.startswith("image/") or mime_type.startswith("video/"):
                 # Send video frame or image data
                 decoded_data = base64.b64decode(data)
-                content = Content(
-                    role="user", 
-                    parts=[Part(inline_data=Blob(data=decoded_data, mime_type=mime_type))]
-                )
-                live_request_queue.send_content(content=content)
+                live_request_queue.send_realtime(Blob(data=decoded_data, mime_type=mime_type))
                 print(f"[CLIENT TO AGENT]: {mime_type}: {len(decoded_data)} bytes")
+
             else:
                 print(f"[WARNING] Unsupported mime type: {mime_type}")
                 
