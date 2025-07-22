@@ -5,7 +5,7 @@
 * you may not use this file except in compliance with the License.
 * You may obtain a copy of the License at
 *
-*     http://www.apache.org/licenses/LICENSE-2.0
+* http://www.apache.org/licenses/LICENSE-2.0
 *
 * Unless required by applicable law or agreed to in writing, software
 * distributed under the License is distributed on an "AS IS" BASIS,
@@ -269,4 +269,100 @@ function arrayBufferToBase64(buffer) {
     binary += String.fromCharCode(bytes[i]);
   }
   return window.btoa(binary);
+}
+
+// ==================================================================
+// NEW: Video Sharing Functionality
+// ==================================================================
+const shareVideoButton = document.getElementById('shareVideoButton');
+const videoFeed = document.getElementById('videoFeed');
+const captureCanvas = document.getElementById('captureCanvas');
+const sentFrameCanvas = document.getElementById('sentFrameCanvas');
+const fpsInput = document.getElementById('fpsInput');
+
+let videoStream = null;
+let frameSenderInterval = null;
+let isVideoSharing = false;
+
+// Add event listener to the video share button
+shareVideoButton.addEventListener('click', toggleVideoSharing);
+
+async function toggleVideoSharing() {
+    if (!isVideoSharing) {
+        // ---- Start Sharing ----
+        try {
+            // Get user's camera stream
+            videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            videoFeed.srcObject = videoStream;
+            videoFeed.style.display = 'block';
+
+            // Start sending frames at the specified FPS
+            const fps = parseInt(fpsInput.value, 10);
+            const interval = 1000 / fps;
+            frameSenderInterval = setInterval(sendVideoFrame, interval);
+
+            shareVideoButton.textContent = 'Stop Sharing';
+            isVideoSharing = true;
+            console.log(`Video sharing started at ${fps} FPS.`);
+
+        } catch (error) {
+            console.error("Error accessing camera:", error);
+            alert("Could not access the camera. Please check permissions.");
+        }
+    } else {
+        // ---- Stop Sharing ----
+        if (videoStream) {
+            videoStream.getTracks().forEach(track => track.stop());
+        }
+        if (frameSenderInterval) {
+            clearInterval(frameSenderInterval);
+        }
+        
+        videoFeed.srcObject = null;
+        shareVideoButton.textContent = 'Share Video';
+        isVideoSharing = false;
+        console.log("Video sharing stopped.");
+        
+        // Clear the last sent frame canvas
+        const ctx = sentFrameCanvas.getContext('2d');
+        ctx.clearRect(0, 0, sentFrameCanvas.width, sentFrameCanvas.height);
+    }
+}
+
+function sendVideoFrame() {
+    if (!videoStream || videoFeed.paused || videoFeed.ended) {
+        return;
+    }
+
+    const captureCtx = captureCanvas.getContext('2d');
+    const sentFrameCtx = sentFrameCanvas.getContext('2d');
+    
+    // Set canvas dimensions to match video to avoid distortion
+    const videoWidth = videoFeed.videoWidth;
+    const videoHeight = videoFeed.videoHeight;
+    if (captureCanvas.width !== videoWidth || captureCanvas.height !== videoHeight) {
+        captureCanvas.width = videoWidth;
+        captureCanvas.height = videoHeight;
+        sentFrameCanvas.width = videoWidth;
+        sentFrameCanvas.height = videoHeight;
+    }
+    
+    // Draw the current video frame onto the hidden canvas
+    captureCtx.drawImage(videoFeed, 0, 0, videoWidth, videoHeight);
+
+    // Draw the captured frame to the visible canvas for user feedback
+    sentFrameCtx.drawImage(captureCanvas, 0, 0, videoWidth, videoHeight);
+    
+    // Get the frame as a JPEG image in Base64
+    // The quality parameter (0.7) can be adjusted to balance quality and file size
+    const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.7);
+    const base64Data = dataUrl.split(',')[1];
+
+    // Send the frame data over the WebSocket
+    sendMessage({
+        mime_type: 'image/jpeg',
+        data: base64Data,
+    });
+
+    console.log(`[CLIENT TO AGENT] Sent video frame (${base64Data.length} bytes)`);
 }
