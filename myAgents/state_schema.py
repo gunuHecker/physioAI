@@ -1,14 +1,16 @@
 from typing import Dict, Any
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 class ConversationStage(Enum):
-    """Enum for conversation stages"""
+    """Enum for the complete conversation flow"""
     GREETING = "greeting"
     PAIN_ANALYSIS = "pain_analysis"
-    CONSENT = "consent"
-    ASSESSMENT = "assessment"
+    CONSENT_QUIZ = "consent_quiz"
+    ASSESSMENT_QUIZ = "assessment_quiz"
+    CONSENT_EXERCISE = "consent_exercise"
+    EXERCISE_GUIDANCE = "exercise_guidance"
     CLOSURE = "closure"
 
 @dataclass
@@ -17,23 +19,20 @@ class ALIASessionState:
     
     # Core flow control
     conversation_stage: ConversationStage = ConversationStage.GREETING
-    next_agent: ConversationStage = ConversationStage.GREETING
+    
+    # Context for closure agent
+    closure_reason: str = "Session completed successfully."
     
     # Basic tracking
     interaction_count: int = 0
     last_user_message: str = ""
-    session_start_time: str = None
-    
-    def __post_init__(self):
-        """Initialize default values after creation"""
-        if self.session_start_time is None:
-            self.session_start_time = datetime.now().isoformat()
+    session_start_time: str = field(default_factory=lambda: datetime.now().isoformat())
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for ADK state storage"""
         return {
             "conversation_stage": self.conversation_stage.value,
-            "next_agent": self.next_agent.value,
+            "closure_reason": self.closure_reason,
             "interaction_count": self.interaction_count,
             "last_user_message": self.last_user_message,
             "session_start_time": self.session_start_time
@@ -42,20 +41,14 @@ class ALIASessionState:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'ALIASessionState':
         """Create from dictionary (from ADK state)"""
-        # Filter out keys that aren't part of our dataclass
         valid_keys = {
-            'conversation_stage', 'next_agent', 'interaction_count', 
+            'conversation_stage', 'closure_reason', 'interaction_count', 
             'last_user_message', 'session_start_time'
         }
-        
         filtered_data = {k: v for k, v in data.items() if k in valid_keys}
         
-        # Convert enum strings back to enums
         if 'conversation_stage' in filtered_data and isinstance(filtered_data['conversation_stage'], str):
             filtered_data['conversation_stage'] = ConversationStage(filtered_data['conversation_stage'])
-        
-        if 'next_agent' in filtered_data and isinstance(filtered_data['next_agent'], str):
-            filtered_data['next_agent'] = ConversationStage(filtered_data['next_agent'])
         
         return cls(**filtered_data)
     
@@ -65,13 +58,15 @@ class ALIASessionState:
         if user_message:
             self.last_user_message = user_message
     
-    def transition_to_stage(self, new_stage: ConversationStage):
+    def transition_to_stage(self, new_stage: ConversationStage, reason: str = ""):
         """Transition to new conversation stage"""
         self.conversation_stage = new_stage
-        self.next_agent = new_stage
-    
+        if reason:
+            self.closure_reason = reason
+            
+    # ADD THIS METHOD
     def get_summary(self) -> str:
-        """Generate a simple session summary"""
+        """Generate a simple session summary for logging."""
         return f"Stage: {self.conversation_stage.value} | Interactions: {self.interaction_count}"
 
 class StateManager:
@@ -80,6 +75,8 @@ class StateManager:
     @staticmethod
     def create_initial_state(user_id: str, session_id: str) -> ALIASessionState:
         """Create initial session state"""
+        # The user_id and session_id are passed but not used in this simple state,
+        # but the method signature matches what main.py expects.
         return ALIASessionState()
     
     @staticmethod
